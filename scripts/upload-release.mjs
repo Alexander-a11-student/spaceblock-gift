@@ -3,6 +3,7 @@ import { createReadStream } from 'node:fs';
 import { readFile, writeFile, stat } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import https from 'node:https';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const statePath = resolve(root, 'scripts/release-state.json');
@@ -26,12 +27,34 @@ for (const name of names) {
   const file = resolve(root, '..', name);
   const { size } = await stat(file);
   console.log(`Uploading ${name} (${size} bytes)`);
-  const stream = createReadStream(file);
-  const response = await fetch(`${state.upload_url.replace(/\{.*$/, '')}?name=${encodeURIComponent(name)}`, {
-    method: 'POST', headers: { ...headers, 'Content-Type': 'application/octet-stream', 'Content-Length': String(size) }, body: stream, duplex: 'half',
+  const asset = await new Promise((resolveUpload, rejectUpload) => {
+    const stream = createReadStream(file);
+    const request = https.request(`${state.upload_url.replace(/\{.*$/, '')}?name=${encodeURIComponent(name)}`, {
+      method: 'POST', headers: { ...headers, 'User-Agent': 'SpaceBlock-distribution', 'Content-Type': 'application/octet-stream', 'Content-Length': String(size) },
+    }, response => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', chunk => { body += chunk; });
+      response.on('end', () => {
+        try {
+          const result = JSON.parse(body);
+          if (response.statusCode < 200 || response.statusCode >= 300) throw new Error(`${response.statusCode}: ${result.message}`);
+          resolveUpload(result);
+        } catch (error) { rejectUpload(error); }
+      });
+      response.on('error', rejectUpload);
+    });
+    request.setTimeout(120000, () => request.destroy(new Error('Upload connection timed out')));
+    request.on('error', error => { stream.destroy(); rejectUpload(error); });
+    stream.on('error', error => { request.destroy(); rejectUpload(error); });
+    stream.pipe(request);
+    let sent = 0, previous = 0;
+    stream.on('data', chunk => {
+      sent += chunk.length;
+      const progress = Math.floor(sent / size * 10) * 10;
+      if (progress >= previous + 10) { previous = progress; console.log(`${name}: ${progress}%`); }
+    });
   });
-  const asset = await response.json();
-  if (!response.ok) throw new Error(`${response.status}: ${asset.message}`);
   console.log(`Uploaded ${asset.name}`);
 }
 const release = await api(`/repos/${state.repo}/releases/${state.releaseId}`, { method: 'PATCH', body: JSON.stringify({ draft: false }) });
