@@ -2,6 +2,6 @@
   "name": "spaceblock-gift",
   "private": true,
   "type": "module",
-  "scripts": { "qr": "node scripts/make-qr.mjs", "preview": "node scripts/preview.mjs" },
-  "devDependencies": { "qrcode": "1.5.4", "jsqr": "1.4.0", "pngjs": "7.0.0" }
+  "scripts": { "qr": "node scripts/make-qr.mjs" },
+  "devDependencies": { "qrcode": "1.5.4" }
 }
